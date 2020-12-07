@@ -1,7 +1,7 @@
 //! UEFI services available during boot.
 
 use super::Header;
-use crate::data_types::Align;
+use crate::{Char16, data_types::Align, proto::media::fs::SimpleFileSystem};
 use crate::proto::{Protocol, loaded_image::DevicePath};
 use crate::{Event, Guid, Handle, Result, Status};
 #[cfg(feature = "exts")]
@@ -85,17 +85,22 @@ pub struct BootServices {
         boot_poloicy: bool, 
         parent: Handle, 
         device_path: Handle, 
-        source: *mut u8, 
+        source: &mut u8, 
         size: usize,
-         out_handle: *mut Handle
+        out_handle: &mut Handle
     ) -> Status,
     start_image: unsafe extern "efiapi" fn(
         image_handle: Handle,
         exit_data_size: &mut usize,
-        exit_data: &mut *mut c_void
-    ),
-    exit: usize,
-    unload_image: usize,
+        exit_data: &mut *mut Char16
+    ) -> Status,
+    exit: unsafe extern "efiapi" fn(
+        image_handle: Handle,
+        exit_status: Status,
+        exit_data_size: usize,
+        exit_data: *mut Char16
+    ) -> Status,
+    unload_image: unsafe extern "efiapi" fn(image_handle: Handle) -> Status,
     exit_boot_services:
         unsafe extern "efiapi" fn(image_handle: Handle, map_key: MemoryMapKey) -> Status,
 
@@ -434,12 +439,34 @@ impl BootServices {
     /// Locates the handle to a device on the device path that supports the specified protocol.
     pub fn locate_device_path<P: Protocol>(&self, device_path: &mut DevicePath) -> Result<Handle> {
         unsafe {
-            let mut handle = Handle::uninitialized();
+            let mut out_handle = Handle::uninitialized();
             let mut device_path_ptr = device_path as *mut DevicePath;
-            (self.locate_device_path)(&P::GUID, &mut device_path_ptr, &mut handle).into_with_val(|| {
-                handle
+            (self.locate_device_path)(&P::GUID, &mut device_path_ptr, &mut out_handle).into_with_val(|| {
+                out_handle
             })
         }
+    }
+
+    pub unsafe fn load_image(
+        &self, 
+        boot_policy: bool, 
+        parent: Handle, 
+        device_path: &mut DevicePath, 
+        source: &mut [u8],
+         size: usize
+    ) -> Result<Handle> {
+        let mut out_handle = Handle::uninitialized();
+        let device_path_handle = match self.locate_device_path::<SimpleFileSystem>(device_path) {
+            Ok(completion) => match completion.status() {
+                Status::SUCCESS => completion.unwrap(),
+                status => return Err(status.into())
+            },
+            Err(error) => return Err(error)
+        };
+
+        (self.load_image)(boot_policy, parent, device_path_handle, &mut source[0], size, &mut out_handle).into_with_val(|| {
+            out_handle
+        })
     }
 
     /// Exits the UEFI boot services
