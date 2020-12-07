@@ -81,8 +81,19 @@ pub struct BootServices {
     install_configuration_table: usize,
 
     // Image services
-    load_image: usize,
-    start_image: usize,
+    load_image: unsafe extern "efiapi" fn(
+        boot_poloicy: bool, 
+        parent: Handle, 
+        device_path: Handle, 
+        source: *mut u8, 
+        size: usize,
+         out_handle: *mut Handle
+    ) -> Status,
+    start_image: unsafe extern "efiapi" fn(
+        image_handle: Handle,
+        exit_data_size: &mut usize,
+        exit_data: &mut *mut c_void
+    ),
     exit: usize,
     unload_image: usize,
     exit_boot_services:
